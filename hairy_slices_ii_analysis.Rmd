@@ -1,0 +1,305 @@
+---
+title: "Hairy Slices II Data Analysis"
+---
+
+Load packages.
+```{r}
+if(!require("plyr")) { install.packages("plyr") }
+if(!require("dplyr")) { install.packages("dplyr") }
+if(!require("ggplot2")) { install.packages("ggplot2") }
+if(!require("lmerTest")) { install.packages("lmerTest") }
+if(!require("car")) { install.packages("car") }
+if(!require("nortest")) { install.packages("nortest") }
+if(!require("moments")) { install.packages("moments") }
+```
+
+
+Load fonts for plotting.
+```{r}
+postscript(family="Times") 
+
+if (.Platform$OS.type == "windows") {
+  windowsFonts(Times=windowsFont("TT Times New Roman"))
+}
+```
+
+Summary data frame function.
+```{r}
+data_summary <- function(data, varname, groupnames){
+  summary_func <- function(x, col){
+    c(n = length(x[[col]]), mean = mean(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE))
+  }
+  data_sum<-ddply(data, groupnames, .fun=summary_func,
+                  varname)
+  data_sum <- plyr::rename(data_sum, c("mean" = varname))
+ return(data_sum)
+}
+```
+
+
+Load results.
+```{r}
+setwd(".")
+
+data <- read.csv("hairy_slices_ii_results.csv", header=T)
+```
+
+
+Add condition groups.
+```{r}
+data$rendering <- as.character(data$geometry)
+data$rendering[which(data$geometry == "Line" & data$texture == "Static")] <- "Streamlets, Static"
+data$rendering[which(data$geometry == "Line" & data$texture == "Animated")] <- "Streamlets, Animated"
+data$rendering[which(data$geometry == "Tube" & data$texture == "Static")] <- "Streamtubes, Static"
+data$rendering[which(data$geometry == "Tube" & data$texture == "Animated")] <- "Streamtubes, Animated"
+data$rendering[which(data$geometry == "Cone" & data$texture == "Static")] <- "Streamcones, Static"
+data$rendering <- factor(data$rendering, levels=c("Streamlets, Static",
+                                                  "Streamlets, Animated",
+                                                  "Streamtubes, Static",
+                                                  "Streamtubes, Animated",
+                                                  "Streamcones, Static"))
+
+data$condition <- paste(data$viewing, data$motion, sep=" | ")
+```
+
+
+Now calculate raw errors as described in Equation 1:
+```{r}
+data$err.raw <- acos(data$target.dir.x * data$probe.x + data$target.dir.y * data$probe.y + data$target.dir.z * data$probe.z)*180/3.14159
+```
+
+
+A plot of the raw mean angular error for each condition. 
+```{r}
+ggplot(data, aes(x=rendering, y=err.raw, color=geometry, group=viewing)) + 
+  stat_summary(fun.data = mean_cl_boot, geom="errorbar") +
+  stat_summary(fun.y=mean, geom="point") + 
+  coord_cartesian(ylim = c(0, 60)) +
+  xlab("") + 
+  ylab("Mean Angular Error (º) with 95% CIs") +
+  theme(legend.position="none", axis.text.x=element_text(angle = 90, hjust = 1, vjust = 0.33), axis.text = element_text(colour='black')) +
+  theme(text=element_text(size=10, family="Times")) +
+  facet_grid( ~ condition)
+
+
+ggsave("overall-total-error-raw.png", width=4, height=4.5, units="in", dpi=300)
+```
+
+A histogram of the raw errors reveals a bimodal distribution: the main right-skewed distribution and a smaller distribution at the far end of the main distrubution's tail. This smaller distrubution arises from antiparallel confusion in the static (non-animated) conditions, and should be corrected.
+```{r}
+ggplot(data, aes(x=err.raw, fill=texture)) +
+  geom_histogram(binwidth = 5, color="black") +
+  scale_fill_brewer(name="Geometry Texture", palette="Set2") +
+  scale_x_continuous(breaks=c(0,45,90,135,180)) +
+  xlab("Raw Angular Errors (°)") +
+  ylab("Count") +
+  theme(legend.position = c(0.7,0.8), axis.title.y=element_blank())
+  
+
+ggsave("histogram-error-distribution.png", width=4, height=2.5, units="in", dpi=300)
+```
+
+
+Based on the raw data, we choose 130 degrees as the threshold for applying antiparallel correction (Equation 4).
+```{r}
+data$corrected <- data$err.raw >= 130
+data$error <- ifelse(data$corrected, 180 - data$err.raw, data$err.raw)
+```
+
+
+Statistics for the raw error.
+```{r}
+anova(lmer(err.raw ~ (rendering + viewing + motion) + (1|id), data=data))
+
+max(data[which(data$geometry == "Cone"),]$err.raw)
+max(data[which(data$geometry == "Line" & data$texture == "Static"),]$err.raw)
+max(data[which(data$geometry == "Tube" & data$texture == "Static"),]$err.raw)
+max(data[which(data$geometry == "Line" & data$texture == "Animated"),]$err.raw)
+max(data[which(data$geometry == "Tube" & data$texture == "Animated"),]$err.raw)
+
+hist(data[which(data$geometry == "Cone" & data$texture == "Static"),]$err.raw, breaks=180)
+hist(data[which(data$geometry == "Line" & data$texture == "Static"),]$err.raw, breaks=180)
+hist(data[which(data$geometry == "Tube" & data$texture == "Static"),]$err.raw, breaks=180)
+hist(data[which(data$geometry == "Line" & data$texture == "Animated"),]$err.raw, breaks=180)
+hist(data[which(data$geometry == "Tube" & data$texture == "Animated"),]$err.raw, breaks=180)
+hist(data[which(data$texture == "Static"),]$err.raw, breaks=180)
+length(data[which(data$texture == "Static" & data$err.raw >= 130),]$err.raw)
+hist(data[which(data$texture == "Static" & data$err.raw >= 130), "err.raw"], breaks=50)
+hist(data[which(data$texture == "Animated"),]$err.raw, breaks=180)
+length(data[which(data$texture == "Animated" & data$err.raw >= 130),]$err.raw)
+hist(data[which(data$texture == "Animated" & data$err.raw >= 130), "err.raw"], breaks=50)
+
+hist(data[which(data$err.raw >= 130), "err.raw"], breaks=50)
+
+hist(data$err.raw, breaks=180, xlim=c(0,180))
+```
+
+
+Calculate the absolute depth error for the corrected data using Equation 2.
+```{r}
+data$depth.err <-ifelse(data$corrected, abs(acos(data$target.dir.z)-acos(-data$probe.z)), abs(acos(data$target.dir.z)-acos(data$probe.z)))*180/3.14159
+```
+
+
+Calculate the weighted projection error using Equation 3.
+```{r}
+data$proj.err <- ifelse(data$corrected, acos((data$target.dir.x*-data$probe.x + data$target.dir.y*-data$probe.y)/(sqrt(data$target.dir.x*data$target.dir.x + data$target.dir.y*data$target.dir.y)*sqrt(data$probe.x*data$probe.x+data$probe.y*data$probe.y)))*(180/3.14159)*(1-abs(data$target.dir.z)), acos((data$target.dir.x*data$probe.x + data$target.dir.y*data$probe.y)/(sqrt(data$target.dir.x*data$target.dir.x + data$target.dir.y*data$target.dir.y)*sqrt(data$probe.x*data$probe.x+data$probe.y*data$probe.y)))*(180/3.14159)*(1-abs(data$target.dir.z)))
+```
+
+
+Histogram of the error, after being corrected for antiparallel confusion
+```{r}
+ggplot(data, aes(x=error, fill=texture)) +
+  geom_histogram(binwidth = 5, color="black") +
+  scale_fill_brewer(name="Geometry Texture", palette="Set2") +
+  scale_x_continuous(breaks=c(0,45,90,135,180)) +
+  xlab("Raw Angular Errors (°)") +
+  ylab("Count") +
+  theme(legend.position = c(0.7,0.8), axis.title.y=element_blank())
+```
+
+Plot a count of antiparallel corrections.
+```{r}
+data %>%
+  data_summary(varname="corrected", groupnames=c("rendering", "geometry", "condition")) %>%
+
+ggplot(aes(x=rendering, y=corrected*100, color=geometry, group=condition, fill=geometry, label=round(corrected*100,2))) + 
+  geom_bar(stat="identity", color="black", position=position_dodge()) +
+  xlab("") + 
+  ylab("Antiparallel Corrections (%)") +
+  theme(legend.position="none", axis.text.x=element_text(angle = 90, hjust = 1, vjust = 0.33), axis.text = element_text(colour='black')) +
+  theme(text=element_text(size=10, family="Times")) +
+  facet_grid(. ~ condition)
+
+ggsave("corrections.png", width=4, height=4.25, units="in", dpi=300)
+```
+
+
+
+Now look at corrected data.
+```{r}
+ggplot(data, aes(x=rendering, y=error, color=geometry, group=viewing)) + 
+  stat_summary(fun.data = mean_cl_boot, geom="errorbar") +
+  stat_summary(fun.y=mean, geom="point") + 
+  coord_cartesian(ylim = c(0, 60)) +
+  xlab("") + 
+  ylab("Mean Angular Error (°) with 95% CIs") +
+  theme(legend.position="none", axis.text.x=element_text(angle = 90, hjust = 1, vjust = 0.33), axis.text = element_text(colour='black')) +
+  theme(text=element_text(size=10, family="Times")) +
+  facet_grid(. ~ condition)
+
+ggsave("overall-total-error-corrected.png", width=4, height=4.5, units="in", dpi=300)
+```
+
+Corrected data, grouped by glyph design.
+```{r}
+ggplot(data, aes(x=condition, y=error, color=geometry, group=viewing)) + 
+  stat_summary(fun.data = mean_cl_boot, geom="errorbar") +
+  stat_summary(fun.y=mean, geom="point") + 
+  coord_cartesian(ylim = c(0, 60)) +
+  xlab("") + 
+  ylab("Mean Angular Error (°) with 95% CIs") +
+  theme(legend.position="none", axis.text.x=element_text(angle = 90, hjust = 1, vjust = 0.33), axis.text = element_text(colour='black')) +
+  theme(text=element_text(size=10, family="Times")) +
+  facet_grid(. ~ rendering)
+
+ggsave("overall-total-error-corrected-by-glyph.png", width=4, height=4.5, units="in", dpi=300)
+```
+
+
+Kruskal-Wallis nonparametric test and Pairwise Wilcoxon test for the three experimental groups.
+```{r}
+kruskal.test(error ~ rendering, data=data)
+pairwise.wilcox.test(data$error, data$rendering, p.adjust.method = "BH")
+
+kruskal.test(error ~ motion, data=data)
+pairwise.wilcox.test(data$error, data$motion, p.adjust.method = "BH")
+
+kruskal.test(error ~ viewing, data=data)
+pairwise.wilcox.test(data$error, data$viewing, p.adjust.method = "BH")
+```
+SfM significantly lowers errors in streamline conditions.
+```{r}
+kruskal.test(error ~ motion, data=data[which(data$geometry=="Line"),])
+pairwise.wilcox.test(data[which(data$geometry=="Line"),]$error, data[which(data$geometry=="Line"),]$motion, p.adjust.method = "BH")
+```
+
+Stereo helps non-cone conditions.
+```{r}
+kruskal.test(error ~ viewing, data=data[which(data$geometry!="Cone"),])
+pairwise.wilcox.test(data[which(data$geometry!="Cone"),]$error, data[which(data$geometry!="Cone"),]$viewing, p.adjust.method = "BH")
+```
+
+Cone performance is not affected by stereo viewing nor motion parallax
+```{r}
+kruskal.test(error ~ viewing, data=data[which(data$geometry=="Cone"),])
+kruskal.test(error ~ motion, data=data[which(data$geometry=="Cone"),])
+```
+
+Animated lines are worse than static, but tubes are not significantly different in error rates between static and animated conditions.
+```{r}
+kruskal.test(error ~ texture, data=data[which(data$geometry=="Line"),])
+pairwise.wilcox.test(data[which(data$geometry=="Line"),]$error, data[which(data$geometry=="Line"),]$texture, p.adjust.method = "BH")
+kruskal.test(error ~ texture, data=data[which(data$geometry=="Tube"),])
+pairwise.wilcox.test(data[which(data$geometry=="Tube"),]$error, data[which(data$geometry=="Tube"),]$texture, p.adjust.method = "BH")
+```
+
+Kruskal-Wallis nonparametric test and Pairwise Wilcoxon test for the three experimental groups for absolute depth error.
+```{r}
+kruskal.test(depth.err ~ rendering, data=data)
+pairwise.wilcox.test(data$depth.err, data$rendering, p.adjust.method = "BH")
+
+kruskal.test(depth.err ~ motion, data=data)
+pairwise.wilcox.test(data$depth.err, data$motion, p.adjust.method = "BH")
+
+kruskal.test(depth.err ~ viewing, data=data)
+pairwise.wilcox.test(data$depth.err, data$viewing, p.adjust.method = "BH")
+```
+
+Kruskal-Wallis nonparametric test and Pairwise Wilcoxon test for the three experimental groups for weighted projection error.
+```{r}
+kruskal.test(proj.err ~ rendering, data=data)
+pairwise.wilcox.test(data$proj.err, data$rendering, p.adjust.method = "BH")
+
+kruskal.test(proj.err ~ motion, data=data)
+pairwise.wilcox.test(data$proj.err, data$motion, p.adjust.method = "BH")
+
+kruskal.test(proj.err ~ viewing, data=data)
+pairwise.wilcox.test(data$proj.err, data$viewing, p.adjust.method = "BH")
+```
+
+
+
+Plot depth errors.
+```{r}
+ggplot(data, aes(x=rendering, y=depth.err, color=geometry, group=viewing)) + 
+  stat_summary(fun.data = mean_cl_boot, geom="errorbar") +
+  stat_summary(fun.y=mean, geom="point") + 
+  coord_cartesian(ylim = c(0, 60)) +
+  xlab("") + 
+  ylab("Absolute Depth Error (º) with 95% CIs") +
+  theme(legend.position="none", axis.text.x=element_text(angle = 90, hjust = 1, vjust = 0.33), axis.text = element_text(colour='black')) +
+  theme(text=element_text(size=10, family="Times")) +
+  facet_grid(. ~ condition)
+
+ggsave("overall-depth-error.png", width=4, height=4.5, units="in", dpi=300)
+```
+
+
+Plot the projection errors.
+```{r}
+ggplot(data, aes(x=rendering, y=proj.err, color=geometry, group=viewing)) + 
+  stat_summary(fun.data = mean_cl_boot, geom="errorbar") +
+  stat_summary(fun.y=mean, geom="point") + 
+  coord_cartesian(ylim = c(0, 10)) +
+  xlab("") + 
+  ylab("Weighted Projection Error (°) with 95% CIs") +
+  theme(legend.position="none", axis.text.x=element_text(angle = 90, hjust = 1, vjust = 0.33), axis.text = element_text(colour='black')) +
+  theme(text=element_text(size=10, family="Times")) +
+  facet_grid(. ~ condition)
+
+ggsave("overall-proj-error.png", width=4, height=5, units="in", dpi=300)
+```
+
+
