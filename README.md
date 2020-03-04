@@ -2,7 +2,7 @@
 The dataset, results, and statistical analyses from the paper "Hairy Slices II: Depth Cues for Visualizing 3D Streamlines Through Cutting Planes" by Stevens et al., 2020
 
 
-## Format for hairy_slices_ii_data.bov
+## Format for hairy_slices_ii_data.bov (available from the Releases page)
 
 ```c
 FILE *inputFile = fopen("hairy_slices_ii_data.bov", "rb");
